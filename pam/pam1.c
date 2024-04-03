@@ -13,6 +13,8 @@ int main ()
 
   /* Создаем новый контекст PAM для сервиса su           */ 
   pam_start ("su", getenv ("USER"), &pamc, &pamh);
+//  pam_start ("su", "root", &pamc, &pamh);
+//  pam_start ("su", "testuser1", &pamc, &pamh);
 
   /* Выполняем аутентификацию пользователя                */ 
   if (pam_authenticate (pamh, 0) != PAM_SUCCESS) 
