@@ -7,17 +7,20 @@ int main ()
   pam_handle_t* pamh; 
   struct pam_conv pamc; 
  
-  /* Set up the PAM conversation.                  */ 
+  /* Используем стандартную conversation-функцию misc_conv   */ 
   pamc.conv = &misc_conv; 
   pamc.appdata_ptr = NULL; 
-  /* Start a new authentication session.           */ 
-  pam_start ("su", getenv ("USER"), &pamc, &pamh); 
-  /* Authenticate the user.                        */ 
+
+  /* Создаем новый контекст PAM для сервиса su           */ 
+  pam_start ("su", getenv ("USER"), &pamc, &pamh);
+
+  /* Выполняем аутентификацию пользователя                */ 
   if (pam_authenticate (pamh, 0) != PAM_SUCCESS) 
-    fprintf (stderr, "Authentication failed!\n"); 
+    fprintf (stderr, "Ошибка аутентификации!\n"); 
   else 
-    fprintf (stderr, "Authentication OK.\n"); 
-  /* All done.                                     */ 
+    fprintf (stderr, "Аутентификация прошла успешно.\n"); 
+
+  /* Закрываем контекст аутентификации                     */ 
   pam_end (pamh, 0); 
   return 0; 
 }
