@@ -1,0 +1,12 @@
+[Unit]
+Description=Pico Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/sbin/PICOFoxweb
+KillMode=process
+User=pico
+Group=pico
+
+[Install]
+WantedBy=multi-user.target
