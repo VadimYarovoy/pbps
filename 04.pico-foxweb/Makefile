@@ -21,7 +21,7 @@ install: PICOFoxweb
 	systemctl restart pico.service
 	mkdir -p /var/www/picoweb
 	cp -r webroot -t /var/www/picoweb/
-	chown -R pico:pico /var/www/picoweb
+	chown -R pico:pico /var/www/picoweb/webroot
 
 uninstall:
 	systemctl stop pico
