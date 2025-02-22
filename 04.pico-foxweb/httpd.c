@@ -10,6 +10,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <time.h>
 
 #define MAX_CONNECTIONS 1000
 #define BUF_SIZE 65535
@@ -19,6 +20,7 @@ static int listenfd;
 int *clients;
 static void start_server(const char *);
 static void respond(int);
+int response_status;
 
 static char *buf;
 
@@ -157,6 +159,23 @@ static void uri_unescape(char *uri) {
   *dst = '\0';
 }
 
+void log_request(const char *ip, const char *method, const char *uri, const char *protocol, int status, int content_length) {
+  FILE *log_file = fopen("/var/log/foxweb.log", "a");
+  if (log_file == NULL) {
+    perror("Failed to open log file");
+    return;
+  }
+
+  time_t now = time(NULL);
+  struct tm *tm_info = localtime(&now);
+  char time_buffer[80];
+  strftime(time_buffer, sizeof(time_buffer), "%d/%b/%Y:%H:%M:%S %z", tm_info);
+
+  fprintf(log_file, "%s - [%s] \"%s %s %s\" %d %u\n", ip, time_buffer, method, uri, protocol, status, content_length);
+
+  fclose(log_file);
+}
+
 // client connection
 void respond(int slot) {
   int rcvd;
@@ -213,6 +232,11 @@ void respond(int slot) {
     payload = t;
     payload_size = t2 ? atol(t2) : (rcvd - (t - buf));
 
+    struct sockaddr_in client_addr;
+    socklen_t len = sizeof(client_addr);
+    getpeername(clients[slot], (struct sockaddr*)&client_addr, &len);
+    char *client_ip = inet_ntoa(client_addr.sin_addr);
+
     // bind clientfd to stdout, making it easier to write
     int clientfd = clients[slot];
     dup2(clientfd, STDOUT_FILENO);
@@ -220,6 +244,8 @@ void respond(int slot) {
 
     // call router
     route();
+
+    log_request(client_ip, method, uri, prot, response_status, payload_size);
 
     // tidy up
     fflush(stdout);
