@@ -1,28 +1,22 @@
 #include "httpd.h"
 
-
-int main(int c, char** v)
-{
+int main() {
     serve_forever("8080");
     return 0;
 }
 
-void route()
-{
+void route() {
     ROUTE_START()
 
-    ROUTE_GET("/")
-    {
+    ROUTE_GET("/") {
         printf("HTTP/1.1 200 OK\r\n\r\n");
-        printf("Hello! You are using %s", request_header("User-Agent"));
+        printf("Hello! Your request is safe.");
     }
 
-    ROUTE_POST("/")
-    {
+    ROUTE_POST("/") {
         printf("HTTP/1.1 200 OK\r\n\r\n");
-        printf("Wow, seems that you POSTed %d bytes. \r\n", payload_size);
-        printf("Fetch the data using `payload` variable.");
+        printf("Received %d bytes (no threats detected).", payload_size);
     }
-  
+
     ROUTE_END()
 }

@@ -1,5 +1,4 @@
 #include "httpd.h"
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -11,192 +10,191 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <ctype.h>
 
 #define CONNMAX 1000
 
 static int listenfd, clients[CONNMAX];
-static void error(char *);
-static void startServer(const char *);
-static void respond(int);
+static int clientfd;
+static char *buf;
 
 typedef struct { char *name, *value; } header_t;
 static header_t reqhdr[17] = { {"\0", "\0"} };
-static int clientfd;
+char *method, *uri, *qs, *prot;
+char *payload;
+int payload_size;
 
-static char *buf;
+static void error(char *);
+static void startServer(const char *);
+static void respond(int);
+static void url_decode(char *src);
+static int is_dangerous(const char *str);
+static void send_forbidden(int client);
 
-// Client request
+static void url_decode(char *src) {
+    char *dst = src;
+    while (*src) {
+        if (*src == '%' && isxdigit(*(src+1)) && isxdigit(*(src+2))) {
+            *dst = (char) strtol(src + 1, NULL, 16);
+            dst++;
+            src += 3;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst = '\0';
+}
 
-char    *method,    // "GET" or "POST"
-        *uri,       // "/index.html" things before '?'
-        *qs,        // "a=1&b=2"     things after  '?'
-        *prot;      // "HTTP/1.1"
+static int is_dangerous(const char *str) {
+    const char *dangerous = ";|&`$()<>";
+    return (strpbrk(str, dangerous) != NULL);
+}
 
-char    *payload;     // for POST
-int      payload_size;
+static void send_forbidden(int client) {
+    const char *response =
+        "HTTP/1.1 403 Forbidden\r\n"
+        "Content-Type: text/plain\r\n"
+        "Connection: close\r\n\r\n"
+        "Command Injection attempt detected!";
+    send(client, response, strlen(response), 0);
+}
 
-
-void serve_forever(const char *PORT)
-{
+void serve_forever(const char *PORT) {
     struct sockaddr_in clientaddr;
     socklen_t addrlen;
-    char c;    
-    
-    int slot=0;
-    
-    printf(
-            "Server started %shttp://127.0.0.1:%s%s\n",
-            "\033[92m",PORT,"\033[0m"
-            );
+    int slot = 0;
 
-    // Setting all elements to -1: signifies there is no client connected
-    int i;
-    for (i=0; i<CONNMAX; i++)
-        clients[i]=-1;
+    printf("Server started \033[92mhttp://127.0.0.1:%s\033[0m\n", PORT);
+
+    for (int i = 0; i < CONNMAX; i++) clients[i] = -1;
     startServer(PORT);
-    
-    // Ignore SIGCHLD to avoid zombie threads
-    signal(SIGCHLD,SIG_IGN);
 
-    // ACCEPT connections
-    while (1)
-    {
+    signal(SIGCHLD, SIG_IGN);
+
+    while (1) {
         addrlen = sizeof(clientaddr);
-        clients[slot] = accept (listenfd, (struct sockaddr *) &clientaddr, &addrlen);
+        clients[slot] = accept(listenfd, (struct sockaddr *)&clientaddr, &addrlen);
 
-        if (clients[slot]<0)
-        {
+        if (clients[slot] < 0) {
             perror("accept() error");
-        }
-        else
-        {
-            if ( fork()==0 )
-            {
+        } else {
+            if (fork() == 0) {
                 respond(slot);
                 exit(0);
             }
         }
-
-        while (clients[slot]!=-1) slot = (slot+1)%CONNMAX;
+        while (clients[slot] != -1) slot = (slot + 1) % CONNMAX;
     }
 }
 
-//start server
-void startServer(const char *port)
-{
+void startServer(const char *port) {
     struct addrinfo hints, *res, *p;
-
-    // getaddrinfo for host
-    memset (&hints, 0, sizeof(hints));
+    memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
-    if (getaddrinfo( NULL, port, &hints, &res) != 0)
-    {
-        perror ("getaddrinfo() error");
+
+    if (getaddrinfo(NULL, port, &hints, &res) != 0) {
+        perror("getaddrinfo() error");
         exit(1);
     }
-    // socket and bind
-    for (p = res; p!=NULL; p=p->ai_next)
-    {
+
+    for (p = res; p != NULL; p = p->ai_next) {
         int option = 1;
-        listenfd = socket (p->ai_family, p->ai_socktype, 0);
+        listenfd = socket(p->ai_family, p->ai_socktype, 0);
         setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
         if (listenfd == -1) continue;
         if (bind(listenfd, p->ai_addr, p->ai_addrlen) == 0) break;
     }
-    if (p==NULL)
-    {
-        perror ("socket() or bind()");
+
+    if (p == NULL) {
+        perror("socket() or bind()");
         exit(1);
     }
 
     freeaddrinfo(res);
-
-    // listen for incoming connections
-    if ( listen (listenfd, 1000000) != 0 )
-    {
+    if (listen(listenfd, 1000000) != 0) {
         perror("listen() error");
         exit(1);
     }
 }
 
+void respond(int n) {
+    int rcvd;
+    buf = malloc(65535);
+    rcvd = recv(clients[n], buf, 65535, 0);
 
-// get request header
-char *request_header(const char* name)
-{
+    if (rcvd < 0) {
+        fprintf(stderr, "recv() error\n");
+        goto cleanup;
+    } else if (rcvd == 0) {
+        fprintf(stderr, "Client disconnected unexpectedly.\n");
+        goto cleanup;
+    }
+
+    buf[rcvd] = '\0';
+    method = strtok(buf, " \t\r\n");
+    uri = strtok(NULL, " \t");
+    prot = strtok(NULL, " \t\r\n");
+
+    qs = strchr(uri, '?');
+    if (qs) {
+        *qs++ = '\0';
+    } else {
+        qs = uri - 1;
+    }
+
+    url_decode(uri);
+    if (qs != uri - 1) url_decode(qs);
+
+    if (memchr(uri, '\0', strlen(uri))) {
+        send_forbidden(clients[n]);
+        goto cleanup;
+    }
+
+    if (is_dangerous(uri) || (qs != uri - 1 && is_dangerous(qs))) {
+        send_forbidden(clients[n]);
+        goto cleanup;
+    }
+
     header_t *h = reqhdr;
-    while(h->name) {
-        if (strcmp(h->name, name) == 0) return h->value;
+    while (h < reqhdr + 16) {
+        char *k = strtok(NULL, "\r\n: \t");
+        if (!k) break;
+        char *v = strtok(NULL, "\r\n");
+        while (v && *v == ' ') v++;
+        h->name = k;
+        h->value = v;
         h++;
     }
-    return NULL;
-}
 
-//client connection
-void respond(int n)
-{
-    int rcvd, fd, bytes_read;
-    char *ptr;
-
-    buf = malloc(65535);
-    rcvd=recv(clients[n], buf, 65535, 0);
-
-    if (rcvd<0)    // receive error
-        fprintf(stderr,("recv() error\n"));
-    else if (rcvd==0)    // receive socket closed
-        fprintf(stderr,"Client disconnected upexpectedly.\n");
-    else    // message received
-    {
-        buf[rcvd] = '\0';
-
-        method = strtok(buf,  " \t\r\n");
-        uri    = strtok(NULL, " \t");
-        prot   = strtok(NULL, " \t\r\n"); 
-
-        fprintf(stderr, "\x1b[32m + [%s] %s\x1b[0m\n", method, uri);
-        
-        if (qs = strchr(uri, '?'))
-        {
-            *qs++ = '\0'; //split URI
-        } else {
-            qs = uri - 1; //use an empty string
+    if (strcmp(method, "POST") == 0) {
+        char *cl = request_header("Content-Length");
+        payload_size = cl ? atoi(cl) : 0;
+        payload = buf + (rcvd - payload_size);
+        if (is_dangerous(payload)) {
+            send_forbidden(clients[n]);
+            goto cleanup;
         }
-
-        header_t *h = reqhdr;
-        char *t, *t2;
-        while(h < reqhdr+16) {
-            char *k,*v,*t;
-            k = strtok(NULL, "\r\n: \t"); if (!k) break;
-            v = strtok(NULL, "\r\n");     while(*v && *v==' ') v++;
-            h->name  = k;
-            h->value = v;
-            h++;
-            fprintf(stderr, "[H] %s: %s\n", k, v);
-            t = v + 1 + strlen(v);
-            if (t[1] == '\r' && t[2] == '\n') break;
-        }
-        t++; // now the *t shall be the beginning of user payload
-        t2 = request_header("Content-Length"); // and the related header if there is  
-        payload = t;
-        payload_size = t2 ? atol(t2) : (rcvd-(t-buf));
-
-        // bind clientfd to stdout, making it easier to write
-        clientfd = clients[n];
-        dup2(clientfd, STDOUT_FILENO);
-        close(clientfd);
-
-        // call router
-        route();
-
-        // tidy up
-        fflush(stdout);
-        shutdown(STDOUT_FILENO, SHUT_WR);
-        close(STDOUT_FILENO);
     }
 
-    //Closing SOCKET
-    shutdown(clientfd, SHUT_RDWR);         //All further send and recieve operations are DISABLED...
+    clientfd = clients[n];
+    dup2(clientfd, STDOUT_FILENO);
     close(clientfd);
-    clients[n]=-1;
+    route();
+    fflush(stdout);
+    shutdown(STDOUT_FILENO, SHUT_WR);
+
+cleanup:
+    free(buf);
+    shutdown(clients[n], SHUT_RDWR);
+    close(clients[n]);
+    clients[n] = -1;
+}
+
+char *request_header(const char* name) {
+    for (header_t *h = reqhdr; h->name; h++) {
+        if (strcmp(h->name, name) == 0) return h->value;
+    }
+    return NULL;
 }
