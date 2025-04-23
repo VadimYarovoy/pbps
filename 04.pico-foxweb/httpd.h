@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "modsec.h"
 
 // Client request
 extern char *method, // "GET" or "POST"

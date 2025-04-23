@@ -176,6 +176,9 @@ void respond(int slot) {
     uri = strtok(NULL, " \t");
     prot = strtok(NULL, " \t\r\n");
 
+    char* orig_uri = malloc(sizeof(char) * strlen(uri));
+    strcpy(orig_uri, uri);
+
     uri_unescape(uri);
 
     fprintf(stderr, "\x1b[32m + [%s] %s\x1b[0m\n", method, uri);
@@ -218,10 +221,16 @@ void respond(int slot) {
     dup2(clientfd, STDOUT_FILENO);
     close(clientfd);
 
+    if (modsec_inspect(buf, orig_uri, payload)) {
+        HTTP_500;
+        return;
+    }
+
     // call router
     route();
 
     // tidy up
+    free(orig_uri);
     fflush(stdout);
     shutdown(STDOUT_FILENO, SHUT_WR);
     close(STDOUT_FILENO);
